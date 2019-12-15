@@ -20,6 +20,7 @@ import logging
 import os
 import uuid
 from argparse import ArgumentParser
+from itertools import chain
 from time import time
 from xml.dom import minidom
 from xml.etree import ElementTree
@@ -58,7 +59,7 @@ def parse_cli():
     aparser = ArgumentParser(description="Quixel to World Creator 2 descriptor generator")
     aparser.set_defaults(basedir=None, logfile=None, loglevel=logging.INFO)
 
-    aparser.add_argument("basedir", action="store", nargs=1, metavar="BASEPATH", help="Base path to Quixel library")
+    aparser.add_argument("basedir", action="store", metavar="BASEPATH", help="Base path to Quixel library")
     aparser.add_argument("--debug", "-d", action="store_const", dest="loglevel", const=logging.DEBUG, help="Show debug messages")
     aparser.add_argument("--logfile", "-l", action="store", metavar="LOGPATH",
                          help="Path to output logfile [default: %(default)s]")
@@ -105,19 +106,36 @@ def write_descriptors(assets):
     for tpath, tass in assets.items():
         tdir = os.path.dirname(tpath)
         tout = {}
-        tout['taglist'] = ' '.join(tass['tags'] + tass['categories'])
+        tout['tags'] = ' '.join(tass['tags'] + tass['categories'])
         tout['desc'] = tass['name'] + '(' + tass['id'] + ')'
         tout['guid'] = str(uuid.uuid5(NODE_UUID, tass['id']))
-        tout['time'] = int(time() * 100000000)
+        tout['time'] = str(int(time() * 100000000))
         tout['preview'] = tass['id'] + '_Preview.png'
 
         # find maps that are present
-        for tmap in tass['maps']:
-            mpath = os.path.join(tdir, tmap['uri'])
-            if os.path.exists(mpath):
-                if tmap['type'] == 'image/x-exr' and not USE_EXR:
-                    continue
-                tout['map_' + tmap['type']] = tmap['uri']
+        if tass.get('components'):
+            # components[ {uris[ { resolutions[ {formats [ {uri}, .. ]}]}]
+            # fuck these nested lists. avert your eyes.
+            flist = [x['uri'] for x in chain(*[x['formats'] for x in chain(*[x['resolutions'] for x in chain(*[x['uris'] for x in tass['components']])])])]
+
+            for tfile in flist:
+                mpath = os.path.join(tdir, tfile)
+                if os.path.exists(mpath):
+                    if tfile.endswith('.exr') and not USE_EXR:
+                        continue
+                    if '_Albedo' in tfile:
+                        tout['map_albedo'] = tfile
+                    elif '_Normal' in tfile:
+                        tout['map_normal'] = tfile
+                    elif '_Displacement' in tfile:
+                        tout['map_displacement'] = tfile
+        else:
+            for tmap in tass['maps']:
+                mpath = os.path.join(tdir, tmap['uri'])
+                if os.path.exists(mpath):
+                    if tmap['type'] == 'image/x-exr' and not USE_EXR:
+                        continue
+                    tout['map_' + tmap['type']] = tmap['uri']
 
         if write_xml(tdir, tout):
             s_ok += 1
@@ -131,12 +149,16 @@ def write_xml(fpath, asset):
     Write new Description.xml at @fpath
     Pass in @asset dict
     """
-    xdata = ElementTree.Element('WorldCreator', Version=Q_WCVERSION)
-    xtextures = ElementTree.SubElement(xdata, 'Textures', Preview=asset['preview'], Tags=asset['tags'],
-                                       Publisher=Q_PUBLISHER, Website=Q_WEBSITE, Guid=asset['guid'])
-    ElementTree.SubElement(xtextures, 'Diffuse', File=asset['map_albedo'], Time=asset['time'])
-    ElementTree.SubElement(xtextures, 'Normal', File=asset['map_normal'], Time=asset['time'])
-    ElementTree.SubElement(xtextures, 'Displacement', File=asset['map_displacement'], Time=asset['time'])
+    try:
+        xdata = ElementTree.Element('WorldCreator', Version=Q_WCVERSION)
+        xtextures = ElementTree.SubElement(xdata, 'Textures', Preview=asset['preview'], Tags=asset['tags'],
+                                        Publisher=Q_PUBLISHER, Website=Q_WEBSITE, Guid=asset['guid'])
+        ElementTree.SubElement(xtextures, 'Diffuse', File=asset['map_albedo'], Time=asset['time'])
+        ElementTree.SubElement(xtextures, 'Normal', File=asset['map_normal'], Time=asset['time'])
+        ElementTree.SubElement(xtextures, 'Displacement', File=asset['map_displacement'], Time=asset['time'])
+    except Exception as e:
+        logger.error("Failed to generate XML [%s]: %s", fpath, str(e))
+        return False
 
     try:
         outfile = os.path.join(fpath, 'Description.xml')

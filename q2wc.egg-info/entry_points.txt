@@ -1,0 +1,3 @@
+[console_scripts]
+q2wc = q2wc:_main
+

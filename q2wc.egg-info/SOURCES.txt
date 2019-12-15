@@ -1,0 +1,7 @@
+README.md
+setup.py
+q2wc.egg-info/PKG-INFO
+q2wc.egg-info/SOURCES.txt
+q2wc.egg-info/dependency_links.txt
+q2wc.egg-info/entry_points.txt
+q2wc.egg-info/top_level.txt
